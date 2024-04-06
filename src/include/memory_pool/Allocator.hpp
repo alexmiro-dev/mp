@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include "memory_pool/SlotStatusRegistry.hpp"
+
 #include <atomic>
 #include <bitset>
 #include <concepts>
@@ -8,29 +10,22 @@
 #include <expected>
 #include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <type_traits>
 
 namespace mp {
 
-enum class Error {
-    UnexpectedCodePath,
-    NotInitialized,
-    CannotInitializeAgain,
-    UnableToAllocateMemory,
-    NoFreeSpace,
-    DestructorHasThrownException,
-    BucketIndexOutOfBounds
-};
-
 template <typename T>
 concept PointerType = std::is_pointer_v<T>;
 
+// TODO Candidate to be removed in case we do not need to create the default objects in
+// Allocator::initialize()
 template <typename T>
 concept Allocatable = std::default_initializable<T>;
 
 template <PointerType TYPE, size_t CAPACITY>
-    requires(CAPACITY > 0U)
-class Bucket {
+    requires(CAPACITY > 0u)
+class Bucket final {
 public:
     class iterator {
     public:
@@ -65,7 +60,7 @@ public:
 
     // TODO consider making it 'private' to be used just by 'Allocator'. Maybe this class
     // should be inner class of 'Allocator'
-    [[nodiscard]] bool pushBack(TYPE slot) {
+    [[nodiscard]] bool push_back(TYPE slot) {
         if (size_ < CAPACITY) {
             data_[size_++] = slot;
             return true;
@@ -77,21 +72,22 @@ public:
     iterator begin() { return iterator{data_}; }
     iterator end() { return iterator{data_ + size_}; }
 
-    auto operator[](size_t idx) -> std::expected<TYPE, Error> {
+    auto operator[](size_t idx) -> std::expected<TYPE, error::Result> {
         if (idx >= size_) {
-            return std::unexpected(Error::BucketIndexOutOfBounds);
+            return error::unexp(error::Code::BucketIndexOutOfBounds,
+                                std::format("Bucket::operator[] idx={}", idx));
         }
         return data_[idx];
     }
 
 private:
     TYPE data_[CAPACITY];
-    size_t size_ = 0U;
+    size_t size_ = 0u;
 };
 
 template <Allocatable TYPE, size_t CAPACITY>
-    requires(CAPACITY > 0U)
-class Allocator {
+    requires(CAPACITY > 0u)
+class Allocator final {
 public:
     using size = TYPE;
 
@@ -100,23 +96,27 @@ public:
         std::free(storage_);
     }
 
-    [[nodiscard("Predicate should be verified")]] bool isInitialized() const {
+    [[nodiscard("Predicate should be verified")]] constexpr bool isInitialized() const {
         return initialized_.load(std::memory_order_acquire);
     }
 
-    auto initialize() -> std::expected<bool, Error> {
+    auto initialize() -> std::expected<bool, error::Result> {
         if (isInitialized()) {
-            return std::unexpected(Error::CannotInitializeAgain);
+            return error::unexp(error::Code::CannotInitializeAgain);
         }
         auto const requiredSize = CAPACITY * sizeof(TYPE);
 
         if (storage_ = static_cast<TYPE *>(std::aligned_alloc(alignof(TYPE), requiredSize));
             !storage_) {
-            return std::unexpected(Error::UnableToAllocateMemory);
+            return error::unexp(error::Code::UnableToAllocateMemory);
         }
-        for (size_t idx = 0; idx < CAPACITY; ++idx) {
-            ::new (&storage_[idx]) TYPE{}; // TODO could it raise an exception?
-        }
+        // TODO: This was the first approach to initialize all the memory with default instance of
+        // TYPE, that's why there is a concept 'Allocatable'.
+        //
+        // for (size_t idx = 0; idx < CAPACITY; ++idx) {
+        //     ::new (&storage_[idx]) TYPE{}; // TODO could it raise an exception?
+        // }
+
         initialized_.store(true, std::memory_order_release);
         return true;
     }
@@ -126,96 +126,103 @@ public:
             std::destroy(storage_, storage_ + CAPACITY);
         }
         initialized_.store(false, std::memory_order_release);
-        slots_.reset();
+        registry_.reset();
     }
 
-    [[nodiscard]] constexpr auto allocate() -> std::expected<TYPE *, Error> {
+    template <typename... ARGS>
+    [[nodiscard]] constexpr auto allocate(ARGS &&...args) noexcept
+        -> std::expected<TYPE *, error::Result> {
         if (!isInitialized()) {
-            return std::unexpected(Error::NotInitialized);
+            return error::unexp(error::Code::NotInitialized);
         }
-        if (slots_.all()) {
-            return std::unexpected(Error::NoFreeSpace);
-        }
-        for (size_t idx = 0; idx < CAPACITY; ++idx) {
-            if (!slots_.test(idx)) {
-                slots_.set(idx);
+        if (auto const indexesExp = registry_.fetch(); indexesExp) {
+            try {
+                // Supposed to have only one index
+                size_t const idx = (*indexesExp).at(0u);
+
+                // TODO benchmark this allocation. As alternative this placement new can be done by
+                // initialize() with the default constructor, then here we create the object with
+                // the appropriate arguments and just move it to the position.
+                //
+                ::new (&storage_[idx]) TYPE{std::forward<ARGS>(args)...};
                 return &storage_[idx];
+
+            } catch (std::out_of_range const &ex) {
+                // Trying to get the only one index returned by fetching the registry
+                return error::unexp(error::Code::InternalLogicError,
+                                    "Unable to access the index zero");
+            } catch (...) {
+                return error::unexp(error::Code::ConstructorHasThrownException);
             }
         }
-        return std::unexpected(Error::UnexpectedCodePath);
+        return error::unexp(error::Code::InternalLogicError);
     }
 
+    /**
+     * @brief Try to allocate a specific number of types in an array fashion.
+     */
     template <size_t SIZE>
-        requires(SIZE > 0U)
-    [[nodiscard]] constexpr auto allocate() -> std::expected<Bucket<TYPE *, SIZE>, Error> {
-        auto x = slots_.to_string();
-
+        requires(SIZE > 0u)
+    [[nodiscard]] constexpr auto allocate() -> std::expected<Bucket<TYPE *, SIZE>, error::Result> {
         if (!isInitialized()) {
-            return std::unexpected(Error::NotInitialized);
+            return error::unexp(error::Code::NotInitialized);
         }
-        if (slots_.all()) {
-            return std::unexpected(Error::NoFreeSpace);
-        }
-        std::bitset<CAPACITY> mask;
-        for (auto bit = 0U; bit < SIZE; ++bit) {
-            mask.set(bit, true);
-        }
-        auto y = mask.to_string();
         Bucket<TYPE *, SIZE> bucket;
-        size_t rotation{0U};
 
-        while (rotation < CAPACITY) {
-            if ((mask & slots_).none()) { // Found enough space.
-                for (auto idx = 0U; idx < CAPACITY; ++idx) {
-                    if (mask.test(idx)) {
-                        if (!bucket.pushBack(&storage_[idx])) {
-                            return std::unexpected(Error::UnexpectedCodePath);
-                        }
+        if (auto freeIndexesExp = registry_.fetch(SIZE); freeIndexesExp) {
+            for (auto &&idx : *freeIndexesExp) {
+                try {
+                    ::new (&storage_[idx]) TYPE{};
+                    if (!bucket.push_back(&storage_[idx])) {
+                        return error::unexp(error::Code::InternalLogicError,
+                                            std::format("Cannot push into bucket index={}", idx));
                     }
+                } catch (...) {
+                    return error::unexp(error::Code::ConstructorHasThrownException);
                 }
-                break;
             }
-            //                          saving the right most bit
-            //                  --------^---------------
-            mask = mask >> 1U | (mask << (CAPACITY - 1)); // Rotation.
-            ++rotation;
+        } else {
+            return error::unexp(error::Code::NoFreeSpace);
         }
         return bucket;
     }
 
-    auto deallocate(TYPE *allocated) noexcept -> std::expected<bool, Error> {
+    auto deallocate(TYPE *allocated) noexcept -> std::expected<bool, error::Result> {
         if (!isInitialized()) {
-            return std::unexpected(Error::NotInitialized);
+            return error::unexp(error::Code::NotInitialized);
         }
         for (size_t idx = 0; idx < CAPACITY; ++idx) {
             if (allocated == &storage_[idx]) {
                 try {
                     storage_[idx].~TYPE();
                 } catch (...) {
-                    return std::unexpected(Error::DestructorHasThrownException);
+                    return error::unexp(error::Code::DestructorHasThrownException);
                 }
                 storage_[idx] = TYPE{};
-                slots_.reset(idx);
+                registry_.release(idx);
             }
         }
         return true;
     }
 
-    struct Status {
-        size_t used{0U};
-        size_t remaing{0U};
-    };
-
-    [[nodiscard]] constexpr Status status() const {
-        Status s;
-        s.used = slots_.count();
-        s.remaing = CAPACITY - s.used;
-        return s;
+    template <typename BTYPE, size_t BSIZE>
+        requires(std::same_as<TYPE, BTYPE>)
+    auto deallocate(Bucket<BTYPE, BSIZE> &bucket) noexcept -> std::expected<bool, error::Result> {
+        for (auto obj : bucket) {
+            if (auto result = deallocate(obj); !result) {
+                return result.error();
+            }
+        }
+        return true;
     }
 
+    [[nodiscard]] auto status() const {
+        return registry_.status();
+    }
+
+
 private:
-    // 0 indicates the slot is free, and 1 means it is being used
-    std::bitset<CAPACITY> slots_;
+    SlotStatusRegistry<CAPACITY> registry_;
     std::atomic_bool initialized_ = false;
     TYPE *storage_ = nullptr;
 };

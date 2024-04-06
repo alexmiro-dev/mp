@@ -14,7 +14,7 @@ set(CMAKE_CXX_EXTENSIONS        OFF)
 set(CMAKE_BUILD_TYPE            Debug)
 #set(CMAKE_GENERATOR             "Ninja")
 
-add_compile_options(-fconcepts-diagnostics-depth=3 -fcoroutines)
+add_compile_options(-Wall -Wextra -pedantic -fconcepts-diagnostics-depth=3 -fcoroutines)
 
 #================================================================================
 # Boost::ut

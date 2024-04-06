@@ -22,7 +22,7 @@ int main() {
     expect(status.used == 0);
 
     if (auto init = alloc.initialize(); !init.has_value()){
-        if (init.error() == mp::Error::UnableToAllocateMemory) {
+        if (init.error().code == mp::error::Code::UnableToAllocateMemory) {
 
         }
     } 
@@ -84,6 +84,6 @@ int main() {
 
     auto oops = bucket[3];
     expect(oops.has_value() == false);
-    expect(oops.error() == mp::Error::BucketIndexOutOfBounds);
+    expect(oops.error().code == mp::error::Code::BucketIndexOutOfBounds);
 }
 

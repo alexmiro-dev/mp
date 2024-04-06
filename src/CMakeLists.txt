@@ -1,5 +1,6 @@
 
 add_library(mp INTERFACE 
+    include/memory_pool/SlotStatusRegistry.hpp
     include/memory_pool/Allocator.hpp
 )
 
