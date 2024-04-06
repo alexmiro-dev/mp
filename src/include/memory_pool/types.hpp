@@ -1,12 +1,14 @@
 
 #pragma once
 
+#include "memory_pool/Allocator.hpp"
 #include <expected>
+#include <source_location>
 #include <string>
 
 namespace mp::error {
 
-enum class Code {
+enum class Ecode {
     NoError = 0u,
     InternalLogicError,
     NotInitialized,
@@ -19,12 +21,17 @@ enum class Code {
 };
 
 struct Result {
-    Code code{Code::NoError};
-    std::string detail;
+    Ecode code = Ecode::NoError;
+    std::string description;
+    std::source_location where = std::source_location::current();
+
+    static auto unexp(Result&& result) {
+        return std::unexpected(std::move(result));
+    }
 };
 
-inline auto unexp(Code code, std::string_view msg = "") {
-    Result result{.code = code, .detail = msg.data()};
+inline auto unexp(Ecode code, std::string_view msg = "", std::source_location srcLoc = std::source_location::current()) {
+    Result result{.code = code, .description = msg.data(), .where = srcLoc};
     return std::unexpected(std::move(result));
 }
 

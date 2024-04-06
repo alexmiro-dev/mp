@@ -36,7 +36,7 @@ public:
 
     [[nodiscard]] auto fetch(size_t num = 1u) -> std::expected<std::vector<size_t>, error::Result> {
         if (!has_space(num)) {
-            return error::unexp(error::Code::NoFreeSpace);
+            return error::unexp(error::Ecode::NoFreeSpace);
         }
         unsigned int *it = data_;
         static unsigned int *end = data_ + kMaxIndex;
@@ -55,7 +55,7 @@ public:
             ++it;
         }
         if (freeIndexes.size() != num) {
-            return error::unexp(error::Code::InternalLogicError);
+            return error::unexp(error::Ecode::InternalLogicError);
         }
         return freeIndexes;
     }

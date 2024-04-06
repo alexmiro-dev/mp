@@ -1,14 +1,13 @@
 #include <boost/ut.hpp>
-
 #include <memory_pool/Allocator.hpp>
 
 class Person {
-    public:
+public:
     std::string firstName;
     uint16_t age{0U};
 
-    Person() { std::cout << "Person Ctor\n";}
-    ~Person() { std::cout << "Person Dctor name[" << firstName << "] age[" << age << "]\n";}
+    Person() { std::cout << "Person Ctor\n"; }
+    ~Person() { std::cout << "Person Dctor name[" << firstName << "] age[" << age << "]\n"; }
 };
 
 int main() {
@@ -18,17 +17,15 @@ int main() {
 
     auto status = alloc.status();
 
-    
     expect(status.used == 0);
 
-    if (auto init = alloc.initialize(); !init.has_value()){
-        if (init.error().code == mp::error::Code::UnableToAllocateMemory) {
-
+    if (auto init = alloc.initialize(); !init.has_value()) {
+        if (init.error().code == mp::error::Ecode::UnableToAllocateMemory) {
         }
-    } 
+    }
 
-    Person* p{nullptr};
-    if (auto result = alloc.allocate(); result.has_value()){
+    Person *p{nullptr};
+    if (auto result = alloc.allocate(); result.has_value()) {
         p = *result;
 
         p->firstName = "miro";
@@ -40,8 +37,8 @@ int main() {
         std::cout << p->age << std::endl;
     }
 
-    Person* p2{nullptr};
-    if (auto result = alloc.allocate(); result.has_value()){
+    Person *p2{nullptr};
+    if (auto result = alloc.allocate(); result.has_value()) {
         p2 = *result;
 
         p2->firstName = "jana";
@@ -60,7 +57,7 @@ int main() {
     // expect(status.used == 0);
     // expect(true);
 
-    auto x = alloc.allocate<3>();
+    auto x = alloc.allocate_bucket<3>();
     expect(x.has_value());
     auto bucket = *x;
 
@@ -84,6 +81,5 @@ int main() {
 
     auto oops = bucket[3];
     expect(oops.has_value() == false);
-    expect(oops.error().code == mp::error::Code::BucketIndexOutOfBounds);
+    expect(oops.error().code == mp::error::Ecode::BucketIndexOutOfBounds);
 }
-
