@@ -1,38 +1,31 @@
 
 #pragma once
 
-#include "memory_pool/Allocator.hpp"
+#include <cstdint>
 #include <expected>
 #include <source_location>
 #include <string>
 
 namespace mp::error {
 
-enum class Ecode {
-    NoError = 0u,
-    InternalLogicError,
-    NotInitialized,
-    CannotInitializeAgain,
-    UnableToAllocateMemory,
-    NoFreeSpace,
-    ConstructorHasThrownException,
-    DestructorHasThrownException,
-    BucketIndexOutOfBounds,
+enum class code_e : std::uint32_t {
+    ok = 0u,
+    bad_logic,
+    not_initialized,
+    already_initialized,
+    system_memory_is_full,
+    allocator_is_full,
+    exception_caught_in_ctor,
+    exception_caught_in_dctor,
+    out_of_bounds
 };
 
-struct Result {
-    Ecode code = Ecode::NoError;
+struct result_t {
+    code_e code = code_e::ok;
     std::string description = "";
     std::source_location source = std::source_location::current();
 
-    static auto unexp(Result&& result) {
-        return std::unexpected(std::move(result));
-    }
+    static auto unexp(result_t &&result) { return std::unexpected(std::move(result)); }
 };
-
-inline auto unexp(Ecode code, std::string_view msg = "", std::source_location srcLoc = std::source_location::current()) {
-    Result result{.code = code, .description = msg.data(), .source = srcLoc};
-    return std::unexpected(std::move(result));
-}
 
 } // namespace mp::error

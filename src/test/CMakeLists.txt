@@ -6,5 +6,6 @@ function(create_test sourceFileName)
     target_link_libraries(${binaryName} ${dependencies} Boost::ut)
 endfunction()
 
-create_test(Allocator memory_pool::mp)
+create_test(slot_status_registry memory_pool::mp)
+create_test(allocator memory_pool::mp)
 

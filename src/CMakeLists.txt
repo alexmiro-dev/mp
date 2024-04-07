@@ -1,7 +1,8 @@
 
 add_library(mp INTERFACE 
-    include/memory_pool/SlotStatusRegistry.hpp
-    include/memory_pool/Allocator.hpp
+    include/memory_pool/types.hpp
+    include/memory_pool/slot_status_registry.hpp
+    include/memory_pool/allocator.hpp
 )
 
 add_library(memory_pool::mp ALIAS mp)

@@ -1,5 +1,5 @@
 #include <boost/ut.hpp>
-#include <memory_pool/Allocator.hpp>
+#include <memory_pool/allocator.hpp>
 
 class Person {
 public:
@@ -13,18 +13,18 @@ public:
 int main() {
     using namespace boost::ut;
 
-    mp::Allocator<Person, 7> alloc;
+    mp::allocator<Person, 7> alloc;
 
     auto status = alloc.status();
 
     expect(status.used == 0);
 
     if (auto init = alloc.initialize(); !init.has_value()) {
-        if (init.error().code == mp::error::Ecode::UnableToAllocateMemory) {
+        if (init.error().code == mp::error::code_e::system_memory_is_full) {
         }
     }
 
-    Person *p{nullptr};
+    Person* p{nullptr};
     if (auto result = alloc.allocate(); result.has_value()) {
         p = *result;
 
@@ -37,7 +37,7 @@ int main() {
         std::cout << p->age << std::endl;
     }
 
-    Person *p2{nullptr};
+    Person* p2{nullptr};
     if (auto result = alloc.allocate(); result.has_value()) {
         p2 = *result;
 
@@ -81,5 +81,5 @@ int main() {
 
     auto oops = bucket[3];
     expect(oops.has_value() == false);
-    expect(oops.error().code == mp::error::Ecode::BucketIndexOutOfBounds);
+    expect(oops.error().code == mp::error::code_e::out_of_bounds);
 }
