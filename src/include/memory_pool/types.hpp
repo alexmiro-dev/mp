@@ -22,8 +22,8 @@ enum class Ecode {
 
 struct Result {
     Ecode code = Ecode::NoError;
-    std::string description;
-    std::source_location where = std::source_location::current();
+    std::string description = "";
+    std::source_location source = std::source_location::current();
 
     static auto unexp(Result&& result) {
         return std::unexpected(std::move(result));
@@ -31,7 +31,7 @@ struct Result {
 };
 
 inline auto unexp(Ecode code, std::string_view msg = "", std::source_location srcLoc = std::source_location::current()) {
-    Result result{.code = code, .description = msg.data(), .where = srcLoc};
+    Result result{.code = code, .description = msg.data(), .source = srcLoc};
     return std::unexpected(std::move(result));
 }
 

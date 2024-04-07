@@ -26,74 +26,80 @@ concept PointerType = std::is_pointer_v<T>;
 template <typename T>
 concept Allocatable = std::default_initializable<T>;
 
-template <PointerType TYPE, size_t CAPACITY>
-    requires(CAPACITY > 0u)
-class Bucket final {
-public:
-    class iterator {
-    public:
-        using iterator_category = std::forward_iterator_tag;
-        using pointer = TYPE *;
-        using reference = TYPE &;
-        using value_type = TYPE;
-
-        explicit iterator(pointer p) : ptr_{p} {}
-
-        reference operator*() const { return *ptr_; }
-        pointer operator->() { return ptr_; }
-
-        // prefix increment
-        iterator &operator++() {
-            ptr_++;
-            return *this;
-        }
-        // postfix increment
-        iterator operator++(int) {
-            iterator tmp = *this;
-            ++(*this);
-            return tmp;
-        }
-
-        friend bool operator==(iterator const &a, iterator const &b) { return a.ptr_ == b.ptr_; }
-        friend bool operator!=(iterator const &a, iterator const &b) { return a.ptr_ != b.ptr_; }
-
-    private:
-        pointer ptr_ = nullptr;
-    };
-
-    // TODO consider making it 'private' to be used just by 'Allocator'. Maybe this class
-    // should be inner class of 'Allocator'
-    [[nodiscard]] bool push_back(TYPE slot) {
-        if (size_ < CAPACITY) {
-            data_[size_++] = slot;
-            return true;
-        }
-        return false;
-    }
-
-    [[nodiscard]] size_t size() const { return size_; }
-    iterator begin() { return iterator{data_}; }
-    iterator end() { return iterator{data_ + size_}; }
-
-    auto operator[](size_t idx) -> std::expected<TYPE, Result> {
-        if (idx >= size_) {
-            return Result::unexp({Ecode::BucketIndexOutOfBounds, std::format("Bucket::operator[] idx={}", idx)});
-        }
-        return data_[idx];
-    }
-
-private:
-    TYPE data_[CAPACITY];
-    size_t size_ = 0u;
-};
-
-template <Allocatable TYPE, size_t CAPACITY>
-    requires(CAPACITY > 0u)
+/**
+ * Reserves memory space on the heap
+ */
+template <Allocatable ALLOC_T, size_t ALLOC_SIZE>
+    requires(ALLOC_SIZE > 0u)
 class Allocator final {
 private:
-    static constexpr auto kRequiredSize = CAPACITY * sizeof(TYPE);
+    static constexpr auto kRequiredSize = ALLOC_SIZE * sizeof(ALLOC_T);
 
 public:
+    template <PointerType BUCKET_T, size_t BUCKET_SIZE>
+        requires(BUCKET_SIZE > 0u)
+    class Bucket final {
+    public:
+        class iterator {
+        public:
+            using iterator_category = std::forward_iterator_tag;
+            using pointer = BUCKET_T *;
+            using reference = BUCKET_T &;
+            using value_type = BUCKET_T;
+
+            explicit iterator(pointer p) : ptr_{p} {}
+
+            reference operator*() const { return *ptr_; }
+            pointer operator->() { return ptr_; }
+
+            // prefix increment
+            iterator &operator++() {
+                ptr_++;
+                return *this;
+            }
+            // postfix increment
+            iterator operator++(int) {
+                iterator tmp = *this;
+                ++(*this);
+                return tmp;
+            }
+
+            friend bool operator==(iterator const &a, iterator const &b) { return a.ptr_ == b.ptr_; }
+            friend bool operator!=(iterator const &a, iterator const &b) { return a.ptr_ != b.ptr_; }
+
+        private:
+            pointer ptr_ = nullptr;
+        };
+
+        [[nodiscard]] size_t size() const { return size_; }
+        iterator begin() { return iterator{data_}; }
+        iterator end() { return iterator{data_ + size_}; }
+
+        /**
+         * Random access operator
+         */
+        auto operator[](size_t idx) -> std::expected<BUCKET_T, Result> {
+            if (idx >= size_) {
+                return Result::unexp({Ecode::BucketIndexOutOfBounds, std::format("Bucket::operator[] idx={}", idx)});
+            }
+            return data_[idx];
+        }
+
+    private:
+        friend class Allocator<ALLOC_T, ALLOC_SIZE>;
+
+        [[nodiscard]] bool push_back(BUCKET_T slot) {
+            if (size_ < BUCKET_SIZE) {
+                data_[size_++] = slot;
+                return true;
+            }
+            return false;
+        }
+
+        BUCKET_T data_[BUCKET_SIZE];
+        size_t size_ = 0u;
+    };
+
     ~Allocator() {
         deinitialize();
         std::free(storage_);
@@ -103,9 +109,9 @@ public:
 
     auto initialize() -> std::expected<bool, Result> {
         if (is_initialized()) {
-            return error::unexp(Ecode::CannotInitializeAgain);
+            return Result::unexp({Ecode::CannotInitializeAgain});
         }
-        if (storage_ = static_cast<TYPE *>(std::aligned_alloc(alignof(TYPE), kRequiredSize)); !storage_) {
+        if (storage_ = static_cast<ALLOC_T *>(std::aligned_alloc(alignof(ALLOC_T), kRequiredSize)); !storage_) {
             return Result::unexp({Ecode::UnableToAllocateMemory});
         }
         initialized_.store(true, std::memory_order_release);
@@ -114,16 +120,16 @@ public:
 
     void deinitialize() {
         if (is_initialized()) {
-            std::destroy(storage_, storage_ + CAPACITY);
+            std::destroy(storage_, storage_ + ALLOC_SIZE);
         }
         initialized_.store(false, std::memory_order_release);
         registry_.reset();
     }
 
     template <typename... ARGS>
-    [[nodiscard]] constexpr auto allocate(ARGS &&...args) noexcept -> std::expected<TYPE *, Result> {
+    [[nodiscard]] constexpr auto allocate(ARGS &&...args) noexcept -> std::expected<ALLOC_T *, Result> {
         if (!is_initialized()) {
-            return error::unexp(Ecode::NotInitialized);
+            return Result::unexp({Ecode::NotInitialized});
         }
         if (auto const indexesExp = registry_.fetch(); indexesExp) {
             try {
@@ -134,16 +140,16 @@ public:
                 // initialize() with the default constructor, then here we create the object with
                 // the appropriate arguments and just move it to the position.
                 //
-                ::new (&storage_[idx]) TYPE{std::forward<ARGS>(args)...};
+                ::new (&storage_[idx]) ALLOC_T{std::forward<ARGS>(args)...};
                 return &storage_[idx];
 
             } catch (std::out_of_range const &ex) {
-                return error::unexp(Ecode::InternalLogicError, "Unable to access the fetched index");
+                return Result::unexp({Ecode::InternalLogicError, "Unable to access the fetched index"});
             } catch (...) {
-                return error::unexp(Ecode::ConstructorHasThrownException);
+                return Result::unexp({Ecode::ConstructorHasThrownException});
             }
         }
-        return error::unexp(Ecode::InternalLogicError);
+        return Result::unexp({Ecode::InternalLogicError});
     }
 
     /**
@@ -151,42 +157,41 @@ public:
      */
     template <size_t SIZE>
         requires(SIZE > 0u)
-    [[nodiscard]] constexpr auto allocate_bucket() -> std::expected<Bucket<TYPE *, SIZE>, Result> {
+    [[nodiscard]] constexpr auto allocate_bucket() -> std::expected<Bucket<ALLOC_T *, SIZE>, Result> {
         if (!is_initialized()) {
-            return error::unexp(Ecode::NotInitialized);
+            return Result::unexp({Ecode::NotInitialized});
         }
-        Bucket<TYPE *, SIZE> bucket;
+        Bucket<ALLOC_T *, SIZE> bucket;
 
         if (auto freeIndexesExp = registry_.fetch(SIZE); freeIndexesExp) {
             for (auto &&idx : *freeIndexesExp) {
                 try {
-                    ::new (&storage_[idx]) TYPE{};
+                    ::new (&storage_[idx]) ALLOC_T{};
                     if (!bucket.push_back(&storage_[idx])) {
-                        return error::unexp(Ecode::InternalLogicError,
-                                            std::format("Cannot push into bucket index={}", idx));
+                        return Result::unexp({Ecode::InternalLogicError, std::format("Cannot push into bucket index={}", idx)});
                     }
                 } catch (...) {
-                    return error::unexp(Ecode::ConstructorHasThrownException);
+                    return Result::unexp({Ecode::ConstructorHasThrownException});
                 }
             }
         } else {
-            return error::unexp(Ecode::NoFreeSpace);
+            return Result::unexp({Ecode::NoFreeSpace});
         }
         return bucket;
     }
 
-    auto deallocate(TYPE *allocated) noexcept -> std::expected<bool, Result> {
+    auto deallocate(ALLOC_T *allocated) noexcept -> std::expected<bool, Result> {
         if (!is_initialized()) {
-            return error::unexp(Ecode::NotInitialized);
+            return Result::unexp({Ecode::NotInitialized});
         }
-        for (size_t idx = 0; idx < CAPACITY; ++idx) {
+        for (size_t idx = 0; idx < ALLOC_SIZE; ++idx) {
             if (allocated == &storage_[idx]) {
                 try {
-                    storage_[idx].~TYPE();
+                    storage_[idx].~ALLOC_T();
                 } catch (...) {
-                    return error::unexp(Ecode::DestructorHasThrownException);
+                    return Result::unexp({Ecode::DestructorHasThrownException});
                 }
-                storage_[idx] = TYPE{};
+                storage_[idx] = ALLOC_T{};
                 registry_.release(idx);
             }
         }
@@ -194,7 +199,7 @@ public:
     }
 
     template <typename BTYPE, size_t BSIZE>
-        requires(std::same_as<TYPE, BTYPE>)
+        requires(std::same_as<ALLOC_T, BTYPE>)
     auto deallocate(Bucket<BTYPE, BSIZE> &bucket) noexcept -> std::expected<bool, Result> {
         for (auto obj : bucket) {
             if (auto result = deallocate(obj); !result) {
@@ -207,9 +212,9 @@ public:
     [[nodiscard]] auto status() const { return registry_.status(); }
 
 private:
-    SlotStatusRegistry<CAPACITY> registry_;
+    SlotStatusRegistry<ALLOC_SIZE> registry_;
     std::atomic_bool initialized_ = false;
-    TYPE *storage_ = nullptr;
+    ALLOC_T *storage_ = nullptr;
 };
 
 } // namespace mp

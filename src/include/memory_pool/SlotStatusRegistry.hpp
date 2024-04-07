@@ -12,6 +12,9 @@
 
 namespace mp {
 
+using error::Ecode;
+using error::Result;
+
 template <size_t NUM_SLOTS> class SlotStatusRegistry {
 private:
     static constexpr size_t kBitsPerInt = sizeof(unsigned int) * CHAR_BIT;
@@ -36,7 +39,7 @@ public:
 
     [[nodiscard]] auto fetch(size_t num = 1u) -> std::expected<std::vector<size_t>, error::Result> {
         if (!has_space(num)) {
-            return error::unexp(error::Ecode::NoFreeSpace);
+            return Result::unexp({Ecode::NoFreeSpace});
         }
         unsigned int *it = data_;
         static unsigned int *end = data_ + kMaxIndex;
@@ -47,6 +50,7 @@ public:
             if (!is_in_use(idx)) {
                 set(idx);
                 freeIndexes.push_back(idx);
+
                 if (freeIndexes.size() == num) {
                     break;
                 }
@@ -55,7 +59,7 @@ public:
             ++it;
         }
         if (freeIndexes.size() != num) {
-            return error::unexp(error::Ecode::InternalLogicError);
+            return Result::unexp({Ecode::InternalLogicError});
         }
         return freeIndexes;
     }
@@ -77,11 +81,11 @@ public:
 
     struct Status {
         size_t used{0u};
-        size_t remaing{0u};
+        size_t free{0u};
     };
 
     [[nodiscard]] constexpr Status status() const {
-        Status s{.used = totalAssigned_, .remaing = kMaxIndex - totalAssigned_};
+        Status s{.used = totalAssigned_, .free = kMaxIndex - totalAssigned_};
         return s;
     }
 
