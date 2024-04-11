@@ -13,8 +13,8 @@ enum class code_e : std::uint32_t {
     bad_logic,
     not_initialized,
     already_initialized,
-    system_memory_is_full,
-    allocator_is_full,
+    cannot_reserve_system_memory,
+    not_enough_space_in_allocator,
     exception_caught_in_ctor,
     exception_caught_in_dctor,
     out_of_bounds

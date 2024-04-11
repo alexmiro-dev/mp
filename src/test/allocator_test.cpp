@@ -20,7 +20,7 @@ int main() {
     expect(status.used == 0);
 
     if (auto init = alloc.initialize(); !init.has_value()) {
-        if (init.error().code == mp::error::code_e::system_memory_is_full) {
+        if (init.error().code == mp::error::code_e::cannot_reserve_system_memory) {
         }
     }
 
@@ -28,7 +28,7 @@ int main() {
     if (auto result = alloc.allocate(); result.has_value()) {
         p = *result;
 
-        p->firstName = "miro";
+        p->firstName = "miro"; 
         p->age = 48;
     }
 

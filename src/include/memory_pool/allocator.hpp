@@ -20,10 +20,16 @@ using error::result_t;
 template <typename T>
 concept PointerType = std::is_pointer_v<T>;
 
+/** This concept is needed because of allcator::allocate_bucket() that initialize the memory by using the
+ * default constructor.
+ */
+template <typename T>
+concept Allocatable = std::is_default_constructible_v<T>;
+
 /**
  * Reserves memory space on the heap
  */
-template <typename TAlloc, size_t NAlloc>
+template <Allocatable TAlloc, size_t NAlloc>
     requires(NAlloc > 0u)
 class allocator final {
 public:
@@ -100,7 +106,7 @@ public:
             return result_t::unexp({code_e::already_initialized});
         }
         if (storage_ = static_cast<TAlloc*>(std::aligned_alloc(alignof(TAlloc), required_size_)); !storage_) {
-            return result_t::unexp({code_e::system_memory_is_full});
+            return result_t::unexp({code_e::cannot_reserve_system_memory});
         }
         initialized_.store(true, std::memory_order_release);
         return true;
@@ -141,11 +147,12 @@ public:
     }
 
     /**
-     * @brief Try to allocate a specific number of types in an array fashion.
+     * @brief Try to allocate a specific number of elements in an array fashion. Calls the default constructor
+     * of TAlloc to initialize the memory.
      */
     template <size_t SIZE>
         requires(SIZE > 0u)
-    [[nodiscard]] constexpr auto allocate_bucket() -> std::expected<bucket<TAlloc*, NAlloc>, result_t> {
+    [[nodiscard]] constexpr auto allocate_bucket() noexcept -> std::expected<bucket<TAlloc*, NAlloc>, result_t> {
         if (!is_initialized()) {
             return result_t::unexp({code_e::not_initialized});
         }
@@ -163,7 +170,7 @@ public:
                 }
             }
         } else {
-            return result_t::unexp({code_e::allocator_is_full});
+            return result_t::unexp({code_e::not_enough_space_in_allocator});
         }
         return bucket;
     }
