@@ -17,7 +17,8 @@ enum class code_e : std::uint32_t {
     not_enough_space_in_allocator,
     exception_caught_in_ctor,
     exception_caught_in_dctor,
-    out_of_bounds
+    out_of_bounds,
+    deallocation_has_failed
 };
 
 struct result_t {

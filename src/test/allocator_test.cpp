@@ -1,85 +1,86 @@
+#include "memory_pool/types.hpp"
+
 #include <boost/ut.hpp>
 #include <memory_pool/allocator.hpp>
 
-class Person {
-public:
-    std::string firstName;
-    uint16_t age{0U};
+struct Parameter {
+    std::string id{};
+    float value{0.f};
+};
 
-    Person() { std::cout << "Person Ctor\n"; }
-    ~Person() { std::cout << "Person Dctor name[" << firstName << "] age[" << age << "]\n"; }
+struct NotDefaultConstructible {
+    NotDefaultConstructible() = delete;
 };
 
 int main() {
     using namespace boost::ut;
 
-    mp::allocator<Person, 7> alloc;
+    // mp::allocator<NotDefaultConstructible, 1> oops_does_not_compile;
 
-    auto status = alloc.status();
+    "Basic creation"_test = [] {
+        mp::allocator<Parameter, 7> alloc;
+        auto status = alloc.status();
 
-    expect(status.used == 0);
+        expect(status.used == 0);
 
-    if (auto init = alloc.initialize(); !init.has_value()) {
-        if (init.error().code == mp::error::code_e::cannot_reserve_system_memory) {
+        if (auto init = alloc.initialize(); !init.has_value()) {
+            if (init.error().code == mp::error::code_e::cannot_reserve_system_memory) {
+            }
         }
-    }
+    };
 
-    Person* p{nullptr};
-    if (auto result = alloc.allocate(); result.has_value()) {
-        p = *result;
+    "Allocate - one - success"_test = [] {
+        mp::allocator<Parameter, 1> alloc;
+        alloc.initialize();
 
-        p->firstName = "miro"; 
-        p->age = 48;
-    }
+        Parameter* p{nullptr};
 
-    if (p) {
-        std::cout << p->firstName << std::endl;
-        std::cout << p->age << std::endl;
-    }
+        if (auto result = alloc.allocate(); result.has_value()) {
+            p = *result;
 
-    Person* p2{nullptr};
-    if (auto result = alloc.allocate(); result.has_value()) {
-        p2 = *result;
+            p->id = "A";
+            p->value = 1.5f;
+        }
+        expect("A" == p->id);
+        expect(1.5_f == p->value);
+    };
 
-        p2->firstName = "jana";
-        p2->age = 49;
-    }
+    "Allocate - fail - no space left"_test = [] {
+        mp::allocator<Parameter, 1> alloc;
+        alloc.initialize();
 
-    // status = alloc.status();
-    // expect(status.used == 2);
-    // std::ignore = alloc.deallocate(p);
-    //
-    // status = alloc.status();
-    // expect(status.used == 1);
-    // std::ignore = alloc.deallocate(p2);
-    //
-    // status = alloc.status();
-    // expect(status.used == 0);
-    // expect(true);
+        auto result = alloc.allocate();
+        expect(result.has_value());
 
-    auto x = alloc.allocate_bucket<3>();
-    expect(x.has_value());
-    auto bucket = *x;
+        result = alloc.allocate();
+        expect(!result.has_value());
+        expect(result.error().code == mp::error::code_e::not_enough_space_in_allocator);
+    };
 
-    auto b0 = *bucket[0];
-    b0->firstName = "A";
-    b0->age = 1;
+    "Allocate - Bucket - success"_test = [] {
+        mp::allocator<Parameter, 5> alloc;
+        auto x = alloc.allocate_bucket<3>();
+        expect(x.has_value());
+        auto bucket = *x;
 
-    auto b1 = *bucket[1];
-    b1->firstName = "B";
-    b1->age = 2;
+        auto b0 = *bucket[0];
+        b0->id = "A";
+        b0->value = 1.f;
 
-    auto b2 = *bucket[2];
-    b2->firstName = "C";
-    b2->age = 3;
+        auto b1 = *bucket[1];
+        b1->id = "B";
+        b1->value = 2.f;
 
-    expect(bucket.size() == 3);
+        auto b2 = *bucket[2];
+        b2->id = "Cx";
+        b2->value = 3.f;
 
-    for (auto i : bucket) {
-        std::cout << i->firstName << " " << i->age << std::endl;
-    }
+        expect(bucket.size() == 3_u);
 
-    auto oops = bucket[3];
-    expect(oops.has_value() == false);
-    expect(oops.error().code == mp::error::code_e::out_of_bounds);
+        auto oops = bucket[3];
+        expect(oops.has_value() == false);
+        expect(oops.error().code == mp::error::code_e::out_of_bounds);
+
+        alloc.deallocate(bucket);
+    };
 }

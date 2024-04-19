@@ -33,6 +33,9 @@ template <Allocatable TAlloc, size_t NAlloc>
     requires(NAlloc > 0u)
 class allocator final {
 public:
+    /**
+     * Helper class to represent as an array a segment of memory
+     */
     template <PointerType TBucket, size_t NBucket>
         requires(NBucket > 0u)
     class bucket final {
@@ -73,10 +76,17 @@ public:
         iterator end() { return iterator{data_ + size_}; }
 
         auto operator[](size_t idx) -> std::expected<TBucket, result_t> {
+            if (size_ == 0u) {
+                return result_t::unexp({code_e::bad_logic, "The Bucket is empty or was not initialized properly"});
+            }
             if (idx >= size_) {
                 return result_t::unexp({code_e::out_of_bounds, std::format("bucket::operator[] idx={}", idx)});
             }
             return data_[idx];
+        }
+
+        void clean() {
+            size_ =  0u;
         }
 
     private:
@@ -93,6 +103,7 @@ public:
         TBucket data_[NBucket];
         size_t size_ = 0u;
     };
+    // End - Bucket
 
     ~allocator() {
         deinitialize();
@@ -101,6 +112,11 @@ public:
 
     [[nodiscard]] constexpr bool is_initialized() const { return initialized_.load(std::memory_order_acquire); }
 
+    /**
+     * This is the first function to be called in order to reserve the system memory required by this pool.
+     * It was designed to be used at runtime to provide flexibility to the client side instead to make it static
+     * at construction.
+     */
     auto initialize() -> std::expected<bool, result_t> {
         if (is_initialized()) {
             return result_t::unexp({code_e::already_initialized});
@@ -112,6 +128,9 @@ public:
         return true;
     }
 
+    /**
+     * Return the used memory to the system.
+     */
     void deinitialize() {
         if (is_initialized()) {
             std::destroy(storage_, storage_ + NAlloc);
@@ -120,15 +139,18 @@ public:
         registry_.reset();
     }
 
+    /**
+     * Allocates a new instance of TAlloc using its construction parameter is there is any.
+     */
     template <typename... TArgs>
     [[nodiscard]] constexpr auto allocate(TArgs&&... args) noexcept -> std::expected<TAlloc*, result_t> {
         if (!is_initialized()) {
             return result_t::unexp({code_e::not_initialized});
         }
-        if (const auto indexes = registry_.fetch(); indexes) {
+        if (const auto idx_result = registry_.fetch(); idx_result) {
             try {
                 // Supposed to have only one index
-                const size_t first_free = (*indexes).at(0u);
+                const size_t first_free = (*idx_result).at(0u);
 
                 // TODO benchmark this allocation. As alternative this placement new can be done by
                 // initialize() with the default constructor, then here we create the object with
@@ -142,12 +164,15 @@ public:
             } catch (...) {
                 return result_t::unexp({code_e::exception_caught_in_ctor});
             }
+        } else {
+            result_t error{idx_result.error()};
+            return result_t::unexp(std::move(error));
         }
         return result_t::unexp({code_e::bad_logic});
     }
 
     /**
-     * @brief Try to allocate a specific number of elements in an array fashion. Calls the default constructor
+     * Try to allocate a specific number of elements in an array fashion. Calls the default constructor
      * of TAlloc to initialize the memory.
      */
     template <size_t SIZE>
@@ -175,6 +200,9 @@ public:
         return bucket;
     }
 
+    /**
+     * Deallocates a specif memory
+     */
     auto deallocate(TAlloc* allocated) noexcept -> std::expected<bool, result_t> {
         if (!is_initialized()) {
             return result_t::unexp({code_e::not_initialized});
@@ -193,12 +221,13 @@ public:
         return true;
     }
 
-    template <typename TBucket, size_t NBucket>
-        requires(std::same_as<TAlloc, TBucket>)
-    auto deallocate(bucket<TBucket, NBucket>& bucket) noexcept -> std::expected<bool, result_t> {
-        for (auto ptr : bucket) {
+    /**
+     * Deallocates the memory used by the Bucket array
+     */
+    auto deallocate(auto& the_bucket) noexcept -> std::expected<bool, result_t> {
+        for (auto ptr : the_bucket) {
             if (auto result = deallocate(ptr); !result) {
-                return result.error();
+                return result;
             }
         }
         return true;
