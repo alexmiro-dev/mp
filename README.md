@@ -1,4 +1,4 @@
-#mp - Memory Pool
+# mp - Memory Pool
 This is a work-in-progress (WIP) implementation for a memory pool using C++23.
 
 # Disclaimer
